@@ -1351,9 +1351,7 @@ get_config() {
 	}
 
 	STAILQ_INIT(&config);
-	do {
-		pentry = NULL;
-
+	for (;;) {
 		sz = getline(&buf, &buflen, config_file);
 
 		if (sz > 0) {
@@ -1376,28 +1374,27 @@ get_config() {
 					++pentry->nargs;
 					p = real_strchr(p + 1, ',');
 				}
+				STAILQ_INSERT_TAIL(&config, pentry, next);
+				continue;
 			}
 		} else if (sz == 0 || (sz == -1 && errno == 0))
 			/* end of file */
-			pentry = &config_end;
+			break;
 
-		if (pentry == NULL) {
-			/* failed malloc or failed getline */
-			while (!STAILQ_EMPTY(&config)) {
-				pentry = STAILQ_FIRST(&config);
-				STAILQ_REMOVE_HEAD(&config, next);
-				real_free(pentry);
-			}
-			pentry = &config_end;
+		/* failed malloc or failed getline */
+		while (!STAILQ_EMPTY(&config)) {
+			pentry = STAILQ_FIRST(&config);
+			STAILQ_REMOVE_HEAD(&config, next);
+			real_free(pentry);
 		}
 
-		STAILQ_INSERT_TAIL(&config, pentry, next);
-
-	} while (pentry != &config_end);
+		break;
+	}
 
 	real_free(buf);
 	real_fclose(config_file);
 
+	STAILQ_INSERT_TAIL(&config, &config_end, next);
 	pconfig = STAILQ_FIRST(&config);
 
 	return pconfig;
@@ -1528,7 +1525,7 @@ file_descriptor_get(int fd)
 	return NULL;
 }
 
-void
+struct descriptor_info *
 file_descriptor_update(int fd, unsigned int type, const char *location)
 {
 	struct descriptor_info *pinfo;
@@ -1538,15 +1535,17 @@ file_descriptor_update(int fd, unsigned int type, const char *location)
 	pinfo = real_malloc(sizeof(struct descriptor_info) +
 	    real_strlen(location) + 1);
 
-	if (pinfo == NULL)
-		return;
+	if (pinfo != NULL) {
+		pinfo->fd = fd;
+		pinfo->type = type;
+		pinfo->location = (char *)&pinfo[1];
+		pinfo->http_redirect = NULL;
+		real_strcpy(pinfo->location, location);
 
-	pinfo->fd = fd;
-	pinfo->type = type;
-	pinfo->location = (char *)&pinfo[1];
-	real_strcpy(pinfo->location, location);
+		SLIST_INSERT_HEAD(&g_fdlist, pinfo, next);
+	}
 
-	SLIST_INSERT_HEAD(&g_fdlist, pinfo, next);
+	return pinfo;
 }
 
 void
@@ -1558,6 +1557,11 @@ file_descriptor_remove(int fd)
 
 	if (pinfo) {
 		SLIST_REMOVE(&g_fdlist, pinfo, descriptor_info, next);
+		if (pinfo->http_redirect != NULL) {
+			if (pinfo->http_redirect->filefd != -1)
+				real_close(pinfo->http_redirect->filefd);
+			real_free(pinfo->http_redirect);
+		}
 		real_free(pinfo);
 	}
 }
