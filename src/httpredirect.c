@@ -207,7 +207,7 @@ const char *locate_url(char *buf)
 	url = buf + 5;
 	end = real_strchr(url, ' ');
 
-	if (end == NULL ||
+	if (end == NULL || end == url ||
 	    (real_strcmp(end, " HTTP/1.0") && real_strcmp(end, " HTTP/1.1")))
 		return 0;
 
